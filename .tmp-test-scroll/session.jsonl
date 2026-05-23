@@ -1,0 +1,2 @@
+{"type":"session","cwd":"/work"}
+{"type":"message","id":"u1","timestamp":"now","message":{"role":"user","content":"first input"}}
