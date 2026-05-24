@@ -6,10 +6,9 @@ It searches Pi's JSONL session files on demand with ripgrep, shows readable chat
 
 ## Preview
 
-<!-- Add the package screenshot at ./assets/screenshot.png and uncomment the line below. -->
-<!-- ![Pi Scroll screenshot](./assets/screenshot.png) -->
+![Pi Scroll screenshot](./assets/screenshot.png)
 
-The package gallery image is configured in `package.json` as `pi.image` and expects the same screenshot at `assets/screenshot.png` once the package is published.
+The package gallery image is configured in `package.json` as `pi.image` and uses this screenshot when the package is published.
 
 ## Why this exists
 

@@ -2,16 +2,31 @@
   "name": "pi-scroll",
   "version": "0.1.0",
   "private": false,
-  "description": "Pi package that adds a /scroll session history search command",
+  "description": "Fast keyboard-driven Pi session history search with rich previews.",
   "keywords": [
+    "extension",
+    "history-search",
     "pi",
     "pi-extension",
     "pi-package",
+    "ripgrep",
     "scroll",
-    "session-search"
+    "session-history",
+    "session-search",
+    "tui"
   ],
+  "homepage": "https://github.com/beowulf11/pi-scroll#readme",
+  "bugs": {
+    "url": "https://github.com/beowulf11/pi-scroll/issues"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/beowulf11/pi-scroll.git"
+  },
   "files": [
     "README.md",
+    "RELEASE.md",
     "extensions",
     "src",
     "assets"
