@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { type ScrollFilterMode } from "./config.ts";
+import { type ScrollFilterMode, type ScrollSearchMode } from "./config.ts";
 import {
   cleanText,
   parseSessionMetaFromText,
@@ -34,6 +34,9 @@ export type SearchOptions = {
   minQueryLength?: number;
   scope?: SearchScope;
   filterMode?: ScrollFilterMode;
+  searchMode?: ScrollSearchMode;
+  ripgrepMaxCount?: number;
+  signal?: AbortSignal;
 };
 
 export type SearchResponse =
@@ -200,6 +203,26 @@ export function searchRootForScope(
   return join(sessionsDir, sessionDirNameForCwd(scope.cwd));
 }
 
+export function buildRipgrepArgs(options: {
+  query: string;
+  searchRoot: string;
+  searchMode: ScrollSearchMode;
+  maxCount: number;
+}): string[] {
+  const args = [
+    "-n",
+    "--json",
+    "-i",
+    "--glob",
+    "*.jsonl",
+    "--max-count",
+    String(Math.max(1, options.maxCount)),
+  ];
+  if (options.searchMode === "fixed") args.push("--fixed-strings");
+  args.push(options.query, options.searchRoot);
+  return args;
+}
+
 export function searchSessions(options: SearchOptions): Promise<SearchResponse> {
   const query = options.query.trim();
   if (query.length < (options.minQueryLength ?? 2))
@@ -207,11 +230,19 @@ export function searchSessions(options: SearchOptions): Promise<SearchResponse> 
   const searchRoot = searchRootForScope(options.sessionsDir, options.scope);
   if (!existsSync(searchRoot)) return Promise.resolve({ ok: true, results: [] });
 
+  if (options.signal?.aborted) return Promise.resolve({ ok: true, results: [] });
+
   return new Promise((resolve) => {
-    const args = ["-n", "--json", "-i", "--fixed-strings", "--glob", "*.jsonl", query, searchRoot];
+    const args = buildRipgrepArgs({
+      query,
+      searchRoot,
+      searchMode: options.searchMode ?? "fixed",
+      maxCount: options.ripgrepMaxCount ?? 10,
+    });
     const child = spawn("rg", args, { stdio: ["ignore", "pipe", "pipe"] });
 
     const bestByFile = new Map<string, SearchResult>();
+    let settled = false;
     let buffer = "";
     let stderr = "";
     const maxResults = options.maxResults ?? 50;
@@ -269,7 +300,16 @@ export function searchSessions(options: SearchOptions): Promise<SearchResponse> 
       stderr += chunk;
     });
 
+    const abort = () => {
+      if (settled) return;
+      child.kill();
+    };
+    options.signal?.addEventListener("abort", abort, { once: true });
+
     child.on("error", (error: NodeJS.ErrnoException) => {
+      if (settled) return;
+      settled = true;
+      options.signal?.removeEventListener("abort", abort);
       if (error.code === "ENOENT") {
         resolve({ ok: false, error: "ripgrep (`rg`) was not found in PATH.", results: [] });
       } else {
@@ -278,9 +318,17 @@ export function searchSessions(options: SearchOptions): Promise<SearchResponse> 
     });
 
     child.on("close", (code) => {
+      if (settled) return;
+      settled = true;
+      options.signal?.removeEventListener("abort", abort);
+      if (options.signal?.aborted) {
+        resolve({ ok: true, results: [] });
+        return;
+      }
+
       if (buffer) consume(buffer);
       const results = Array.from(bestByFile.values())
-        .sort((a, b) => b.score - a.score || a.line - b.line)
+        .sort((a, b) => b.score - a.score || a.file.localeCompare(b.file) || a.line - b.line)
         .slice(0, maxResults);
       if (code && code !== 1 && results.length === 0) {
         resolve({ ok: false, error: stderr.trim() || `rg exited with code ${code}`, results });

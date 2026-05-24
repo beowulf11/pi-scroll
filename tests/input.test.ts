@@ -21,4 +21,17 @@ describe("scroll input", () => {
   it("maps ctrl-t to filter toggle", () => {
     expect(interpretScrollInput("\x14")).toEqual({ type: "filter" });
   });
+
+  it("maps ctrl-e to cursor end", () => {
+    expect(interpretScrollInput("\x05")).toEqual({ type: "cursorEnd" });
+  });
+
+  it("maps ctrl-s and ctrl-r to search mode toggle", () => {
+    expect(interpretScrollInput("\x13")).toEqual({ type: "searchMode" });
+    expect(interpretScrollInput("\x12")).toEqual({ type: "searchMode" });
+  });
+
+  it("maps ctrl-v to word deletion", () => {
+    expect(interpretScrollInput("\x16")).toEqual({ type: "deleteWordBackward" });
+  });
 });

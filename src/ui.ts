@@ -1,7 +1,12 @@
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { type ScrollConfig, type ScrollFilterMode, type ScrollScopeMode } from "./config.ts";
+import { truncateToWidth, visibleWidth, wrapTextWithAnsi, type TUI } from "@earendil-works/pi-tui";
+import {
+  type ScrollConfig,
+  type ScrollFilterMode,
+  type ScrollScopeMode,
+  type ScrollSearchMode,
+} from "./config.ts";
 import { interpretScrollInput } from "./input.ts";
-import { buildSessionPreview } from "./preview.ts";
+import { buildSessionPreviewComponent, type LazyPreviewComponent } from "./preview-renderer.ts";
 import {
   searchSessions,
   snippetAroundTerms,
@@ -20,6 +25,7 @@ export type ScrollSearchComponentOptions = {
   theme: ScrollTheme;
   done: (file: string | null) => void;
   requestRender: () => void;
+  tui?: TUI;
   sessionsDir: string;
   currentSessionFile?: string;
   cwd: string;
@@ -33,7 +39,7 @@ export class ScrollSearchComponent {
   selected = 0;
   loading = false;
   error: string | undefined;
-  previewLines: string[] = [];
+  previewComponent: LazyPreviewComponent | undefined;
   previewLoading = false;
   previewError: string | undefined;
 
@@ -43,17 +49,26 @@ export class ScrollSearchComponent {
   private previewFile: string | undefined;
   private scopeMode: ScrollScopeMode;
   private filterMode: ScrollFilterMode;
+  private searchMode: ScrollSearchMode;
   private previewOpen: boolean;
+  private activePane: "results" | "preview" = "results";
+  private helpOpen = false;
+  private previewScroll = 0;
+  private previewViewportHeight = 1;
+  private searchAbortController?: AbortController;
   private edgeLatch: { edge: "top" | "bottom"; timestamp: number } | undefined;
   private lastNavigation: { delta: number; timestamp: number } | undefined;
 
   constructor(private options: ScrollSearchComponentOptions) {
     this.scopeMode = options.config.defaultScope;
     this.filterMode = options.config.defaultFilterMode;
+    this.searchMode = options.config.defaultSearchMode;
     this.previewOpen = options.config.preview;
   }
 
-  invalidate(): void {}
+  invalidate(): void {
+    this.cancelActiveSearch();
+  }
 
   render(width: number): string[] {
     const w = Math.max(48, width);
@@ -62,6 +77,19 @@ export class ScrollSearchComponent {
       Math.floor((process.stdout.rows ?? 30) * this.options.config.heightRatio),
     );
     const resultHeight = Math.max(8, targetHeight - 6);
+
+    if (this.helpOpen) {
+      const lines = this.renderHelpBox(w, resultHeight + 5);
+      lines.push(this.footer(w));
+      return lines.map((line) => truncateToWidth(line, w));
+    }
+
+    if (this.activePane === "preview" && this.previewOpen) {
+      const lines = this.renderPreviewBox(w, resultHeight + 5);
+      lines.push(this.footer(w));
+      return lines.map((line) => truncateToWidth(line, w));
+    }
+
     const showPreview = this.previewOpen && w >= this.options.config.previewMinWidth;
     const gap = showPreview ? 1 : 0;
     const resultsWidth = showPreview
@@ -82,15 +110,7 @@ export class ScrollSearchComponent {
       lines.push(...resultBox);
     }
 
-    lines.push(
-      truncateToWidth(
-        this.theme.fg(
-          "dim",
-          `  ↑/↓ Ctrl+P/Ctrl+N move • Ctrl+G ${this.scopeMode === "global" ? "cwd" : "global"} • Ctrl+T ${this.filterMode === "chat" ? "all" : "chat"} • Ctrl+O ${this.previewOpen ? "close" : "open"} preview • Enter switch • Esc cancel`,
-        ),
-        w,
-      ),
-    );
+    lines.push(this.footer(w));
     return lines.map((line) => truncateToWidth(line, w));
   }
 
@@ -99,20 +119,40 @@ export class ScrollSearchComponent {
 
     switch (action.type) {
       case "cancel":
+        if (this.helpOpen) {
+          this.helpOpen = false;
+          this.options.requestRender();
+          return;
+        }
         this.options.done(null);
+        return;
+      case "help":
+        this.helpOpen = !this.helpOpen;
+        this.options.requestRender();
+        return;
+      case "focusPreview":
+        if (!this.previewOpen) this.previewOpen = true;
+        this.activePane = this.activePane === "preview" ? "results" : "preview";
+        this.schedulePreview();
+        this.options.requestRender();
         return;
       case "scope":
         this.scopeMode = this.scopeMode === "global" ? "cwd" : "global";
-        this.scheduleSearch();
+        this.scheduleSearch({ preserveSelection: true });
         return;
       case "preview":
         this.previewOpen = !this.previewOpen;
+        if (!this.previewOpen) this.activePane = "results";
         this.schedulePreview();
         this.options.requestRender();
         return;
       case "filter":
         this.filterMode = this.filterMode === "chat" ? "all" : "chat";
-        this.scheduleSearch();
+        this.scheduleSearch({ preserveSelection: true });
+        return;
+      case "searchMode":
+        this.searchMode = this.searchMode === "fixed" ? "regex" : "fixed";
+        this.scheduleSearch({ preserveSelection: true });
         return;
       case "select": {
         const picked = this.results[this.selected];
@@ -120,23 +160,44 @@ export class ScrollSearchComponent {
         return;
       }
       case "move":
-        this.move(action.delta);
+        if (this.activePane === "preview") this.scrollPreview(action.delta);
+        else this.move(action.delta);
+        return;
+      case "previewHalfPage":
+        if (this.previewOpen) {
+          this.scrollPreview(action.delta * this.previewHalfPageSize());
+        } else if (action.delta > 0 && this.cursor < this.query.length) {
+          this.query = `${this.query.slice(0, this.cursor)}${this.query.slice(this.cursor + 1)}`;
+          this.scheduleSearch();
+        }
+        return;
+      case "ctrlU":
+        if (this.previewOpen) this.scrollPreview(-this.previewHalfPageSize());
+        else if (this.cursor > 0) {
+          this.query = this.query.slice(this.cursor);
+          this.cursor = 0;
+          this.scheduleSearch();
+        }
         return;
       case "cursor":
+        if (this.activePane === "preview") return;
         this.cursor = action.word
           ? this.moveCursorByWord(action.delta)
           : this.clampCursor(this.cursor + action.delta);
         this.options.requestRender();
         return;
       case "cursorStart":
+        if (this.activePane === "preview") return;
         this.cursor = 0;
         this.options.requestRender();
         return;
       case "cursorEnd":
+        if (this.activePane === "preview") return;
         this.cursor = this.query.length;
         this.options.requestRender();
         return;
       case "backspace":
+        if (this.activePane === "preview") return;
         if (this.cursor > 0) {
           this.query = `${this.query.slice(0, this.cursor - 1)}${this.query.slice(this.cursor)}`;
           this.cursor--;
@@ -144,12 +205,14 @@ export class ScrollSearchComponent {
         }
         return;
       case "delete":
+        if (this.activePane === "preview") return;
         if (this.cursor < this.query.length) {
           this.query = `${this.query.slice(0, this.cursor)}${this.query.slice(this.cursor + 1)}`;
           this.scheduleSearch();
         }
         return;
       case "deleteWordBackward": {
+        if (this.activePane === "preview") return;
         const next = this.moveCursorByWord(-1);
         if (next !== this.cursor) {
           this.query = `${this.query.slice(0, next)}${this.query.slice(this.cursor)}`;
@@ -159,6 +222,7 @@ export class ScrollSearchComponent {
         return;
       }
       case "deleteWordForward": {
+        if (this.activePane === "preview") return;
         const next = this.moveCursorByWord(1);
         if (next !== this.cursor) {
           this.query = `${this.query.slice(0, this.cursor)}${this.query.slice(next)}`;
@@ -167,6 +231,7 @@ export class ScrollSearchComponent {
         return;
       }
       case "deleteToStart":
+        if (this.activePane === "preview") return;
         if (this.cursor > 0) {
           this.query = this.query.slice(this.cursor);
           this.cursor = 0;
@@ -174,12 +239,14 @@ export class ScrollSearchComponent {
         }
         return;
       case "deleteToEnd":
+        if (this.activePane === "preview") return;
         if (this.cursor < this.query.length) {
           this.query = this.query.slice(0, this.cursor);
           this.scheduleSearch();
         }
         return;
       case "insert":
+        if (this.activePane === "preview") return;
         this.query = `${this.query.slice(0, this.cursor)}${action.text}${this.query.slice(this.cursor)}`;
         this.cursor += action.text.length;
         this.scheduleSearch();
@@ -204,7 +271,10 @@ export class ScrollSearchComponent {
 
     if (!this.query.trim()) {
       body.push(
-        this.theme.fg("muted", `Search scope: ${this.scopeLabel()} • filter: ${this.filterMode}`),
+        this.theme.fg(
+          "muted",
+          `Search scope: ${this.scopeLabel()} • filter: ${this.filterMode} • search: ${this.searchMode}`,
+        ),
       );
       body.push(
         this.theme.fg("muted", `Search runs live over ${this.options.sessionsDir} with ripgrep.`),
@@ -227,7 +297,7 @@ export class ScrollSearchComponent {
       body.push(
         this.theme.fg(
           "muted",
-          "Install ripgrep or configure Scroll to point at an available search backend later.",
+          "Install ripgrep or configure Pi Scroll to point at an available search backend later.",
         ),
       );
     } else if (this.loading && this.results.length === 0) {
@@ -267,7 +337,7 @@ export class ScrollSearchComponent {
   }
 
   private resultsTitle(): string {
-    const title = `Results: ${this.scopeMode === "global" ? "Global" : "CWD"} / ${this.filterMode}`;
+    const title = `Results: ${this.scopeMode === "global" ? "Global" : "CWD"} / ${this.filterMode} / ${this.searchMode}`;
     if (this.results.length === 0) return title;
     return `${title} (${this.selected + 1}/${this.results.length})`;
   }
@@ -282,24 +352,32 @@ export class ScrollSearchComponent {
       body.push(this.theme.fg("error", this.previewError));
     } else if (this.previewLoading) {
       body.push(this.theme.fg("warning", "loading preview…"));
-    } else if (this.previewLines.length === 0) {
+    } else if (!this.previewComponent) {
       body.push(this.theme.fg("dim", "Select a result to preview the session."));
     } else {
-      for (const line of this.previewLines) {
-        const styled = line.startsWith("user:")
-          ? this.theme.fg("accent", line)
-          : line.startsWith("assistant:")
-            ? line
-            : this.theme.fg("muted", line);
-        body.push(...wrapTextWithAnsi(styled, contentWidth));
-      }
+      body.push(
+        ...this.previewComponent.render(contentWidth).map((line) => this.sanitizePreviewLine(line)),
+      );
     }
 
     const innerHeight = Math.max(1, height - 2);
-    while (body.length < innerHeight) body.push("");
+    this.previewViewportHeight = innerHeight;
+    if (this.previewComponent?.loadingMore) {
+      body.push(this.theme.fg("warning", "loading more preview…"));
+    }
+    const maxScroll = Math.max(0, body.length - innerHeight);
+    this.previewScroll = Math.max(0, Math.min(this.previewScroll, maxScroll));
+    this.maybeLoadMorePreview(body.length, innerHeight);
+    const visibleBody = body.slice(this.previewScroll, this.previewScroll + innerHeight);
+    while (visibleBody.length < innerHeight) visibleBody.push("");
 
-    const lines: string[] = [this.topBorder(width, "Preview")];
-    for (const line of body.slice(0, innerHeight)) lines.push(this.boxLine(line, width));
+    const scrollSuffix =
+      maxScroll > 0
+        ? ` ${this.previewScroll + 1}-${Math.min(body.length, this.previewScroll + innerHeight)}/${body.length}`
+        : "";
+    const title = `${this.activePane === "preview" ? "▶ " : ""}Preview${scrollSuffix}`;
+    const lines: string[] = [this.topBorder(width, title)];
+    for (const line of visibleBody) lines.push(this.boxLine(line, width));
     lines.push(this.bottomBorder(width));
     return lines;
   }
@@ -337,6 +415,44 @@ export class ScrollSearchComponent {
     this.options.requestRender();
   }
 
+  private scrollPreview(delta: number) {
+    this.previewScroll = Math.max(0, this.previewScroll + delta);
+    this.maybeLoadMorePreview();
+    this.options.requestRender();
+  }
+
+  private maybeLoadMorePreview(totalLines?: number, viewportHeight?: number) {
+    const component = this.previewComponent;
+    if (!component || typeof component.loadMore !== "function" || component.loadingMore) return;
+
+    const total = totalLines ?? component.render(Math.max(1, process.stdout.columns ?? 80)).length;
+    const viewport = viewportHeight ?? this.previewViewportHeight;
+    if (total <= 0) return;
+
+    const visibleEnd = this.previewScroll + viewport;
+    const remaining = Math.max(0, total - visibleEnd);
+    if (remaining / total > 0.2 && remaining > viewport) return;
+
+    const wasAtLoadedEnd = remaining <= Math.max(1, Math.ceil(viewport * 0.2));
+    const renderWidth = Math.max(1, process.stdout.columns ?? 80);
+
+    const loadedBefore = component.loadedEntries;
+    void component.loadMore().then(() => {
+      if (this.previewComponent !== component) return;
+      if (component.loadedEntries === loadedBefore) return;
+      if (wasAtLoadedEnd) {
+        const nextTotal = component.render(renderWidth).length;
+        this.previewScroll = Math.max(0, nextTotal - viewport);
+      }
+      this.options.requestRender();
+    });
+    if (component.hasMore) this.options.requestRender();
+  }
+
+  private previewHalfPageSize(): number {
+    return Math.max(1, Math.floor(this.previewViewportHeight / 2));
+  }
+
   private handleEdgeNavigation(edge: "top" | "bottom", wasLikelyHolding: boolean, now: number) {
     const quietMs = this.options.config.navigationWrapQuietMs;
     const previous = this.edgeLatch;
@@ -359,12 +475,16 @@ export class ScrollSearchComponent {
     return this.selected === 0 || this.selected === this.results.length - 1;
   }
 
-  private scheduleSearch() {
+  private scheduleSearch(options: { preserveSelection?: boolean } = {}) {
     if (this.searchTimer) clearTimeout(this.searchTimer);
+    this.cancelActiveSearch();
+    const selectedBeforeSearch = options.preserveSelection
+      ? this.results[this.selected]
+      : undefined;
     const queryLength = this.query.trim().length;
     this.loading = queryLength >= this.options.config.minQueryLength;
     this.error = undefined;
-    this.selected = 0;
+    if (!options.preserveSelection) this.selected = 0;
     this.edgeLatch = undefined;
     this.lastNavigation = undefined;
     if (queryLength < this.options.config.minQueryLength) {
@@ -379,6 +499,8 @@ export class ScrollSearchComponent {
 
     const generation = ++this.searchGeneration;
     this.searchTimer = setTimeout(async () => {
+      const controller = new AbortController();
+      this.searchAbortController = controller;
       const response = await searchSessions({
         sessionsDir: this.options.sessionsDir,
         query: this.query,
@@ -388,15 +510,39 @@ export class ScrollSearchComponent {
         minQueryLength: this.options.config.minQueryLength,
         scope: this.searchScope(),
         filterMode: this.filterMode,
+        searchMode: this.searchMode,
+        ripgrepMaxCount: this.options.config.ripgrepMaxCount,
+        signal: controller.signal,
       });
-      if (generation !== this.searchGeneration) return;
+      if (this.searchAbortController === controller) this.searchAbortController = undefined;
+      if (generation !== this.searchGeneration || controller.signal.aborted) return;
       this.results = response.results;
-      this.selected = 0;
+      this.selected = this.selectedIndexAfterSearch(selectedBeforeSearch);
       this.loading = false;
       this.error = response.ok ? undefined : response.error;
       this.schedulePreview();
       this.options.requestRender();
     }, 120);
+  }
+
+  private selectedIndexAfterSearch(previous: SearchResult | undefined): number {
+    if (this.results.length === 0) return 0;
+    if (!previous) return 0;
+
+    const exact = this.results.findIndex(
+      (result) => result.file === previous.file && result.line === previous.line,
+    );
+    if (exact >= 0) return exact;
+
+    const sameSession = this.results.findIndex((result) => result.file === previous.file);
+    return sameSession >= 0 ? sameSession : 0;
+  }
+
+  private cancelActiveSearch() {
+    if (this.searchAbortController) {
+      this.searchAbortController.abort();
+      this.searchAbortController = undefined;
+    }
   }
 
   private schedulePreview() {
@@ -405,38 +551,86 @@ export class ScrollSearchComponent {
 
     if (!this.previewOpen || !picked) {
       this.previewFile = undefined;
-      this.previewLines = [];
+      this.previewComponent = undefined;
       this.previewLoading = false;
       this.previewError = undefined;
       return;
     }
 
-    if (this.previewFile === picked.file && (this.previewLines.length > 0 || this.previewLoading))
-      return;
+    if (this.previewFile === picked.file && (this.previewComponent || this.previewLoading)) return;
 
     this.previewFile = picked.file;
-    this.previewLines = [];
+    this.previewScroll = 0;
+    this.previewComponent = undefined;
     this.previewLoading = true;
     this.previewError = undefined;
     this.options.requestRender();
 
-    void buildSessionPreview(picked.file, {
-      maxMessages: this.options.config.maxPreviewMessages,
-      maxCharsPerMessage: this.options.config.maxPreviewCharsPerMessage,
+    void buildSessionPreviewComponent(picked.file, {
+      maxEntries: this.options.config.maxPreviewMessages,
+      maxUserChars: this.options.config.maxPreviewCharsPerMessage * 10,
+      tui: this.options.tui,
+      cwd: this.options.cwd,
     })
-      .then((lines) => {
+      .then((component) => {
         if (generation !== this.previewGeneration) return;
-        this.previewLines = lines;
+        this.previewComponent = component;
         this.previewLoading = false;
         this.options.requestRender();
       })
       .catch((error: unknown) => {
         if (generation !== this.previewGeneration) return;
-        this.previewLines = [];
+        this.previewComponent = undefined;
         this.previewLoading = false;
         this.previewError = error instanceof Error ? error.message : String(error);
         this.options.requestRender();
       });
+  }
+
+  private renderHelpBox(width: number, height: number): string[] {
+    const body = [
+      this.theme.bold("Pi Scroll help"),
+      "",
+      "Search",
+      `  Type text                  search live once ${this.options.config.minQueryLength}+ chars`,
+      "  Ctrl+R / Ctrl+S           toggle fixed/regex search",
+      "  Ctrl+G                    toggle CWD/global scope",
+      "  Ctrl+T                    toggle chat/all filter",
+      "",
+      "Navigation",
+      "  ↑/↓ or Ctrl+P/Ctrl+N      move results, or scroll preview when preview is focused",
+      "  Ctrl+D / Ctrl+U           scroll preview down/up by half a screen whenever preview is open",
+      "  Tab                       focus preview; Tab again returns to results",
+      "  Enter                     switch to the selected session",
+      "  Ctrl+O                    open/close preview",
+      "",
+      "Editing",
+      "  Ctrl+A / Ctrl+E           start/end of query",
+      "  Ctrl+V / Ctrl+W           delete word backward",
+      "  Ctrl+D / Ctrl+U           delete under cursor / delete to start when preview is closed",
+      "  Ctrl+K                    delete to end",
+      "",
+      "Other",
+      "  Ctrl+H                    toggle this help",
+      "  Esc                       close help, or cancel Scroll",
+    ];
+
+    const innerHeight = Math.max(1, height - 2);
+    while (body.length < innerHeight) body.push("");
+
+    const lines: string[] = [this.topBorder(width, "Help")];
+    for (const line of body.slice(0, innerHeight)) lines.push(this.boxLine(line, width));
+    lines.push(this.bottomBorder(width));
+    return lines;
+  }
+
+  private footer(width: number): string {
+    const focus = this.activePane === "preview" ? "preview" : "results";
+    const text =
+      focus === "preview"
+        ? "  Ctrl+H help • Tab focus results • ↑/↓ or Ctrl+P/N scroll • Ctrl+D/U half-page • Ctrl+O close preview • Esc cancel"
+        : `  Ctrl+H help • Tab focus preview • ↑/↓ move • Ctrl+D/U ${this.previewOpen ? "scroll preview" : "delete"} • Ctrl+G ${this.scopeMode === "global" ? "cwd" : "global"} • Ctrl+T ${this.filterMode === "chat" ? "all" : "chat"} • Ctrl+R ${this.searchMode === "fixed" ? "regex" : "fixed"} • Ctrl+O ${this.previewOpen ? "close" : "open"} • Enter switch • Esc cancel`;
+    return truncateToWidth(this.theme.fg("dim", text), width);
   }
 
   private renderPrompt(): string {
@@ -486,6 +680,18 @@ export class ScrollSearchComponent {
     return cleaned.replace(regex, (match) =>
       this.theme.bg("selectedBg", this.theme.fg("accent", this.theme.bold(match))),
     );
+  }
+
+  private sanitizePreviewLine(line: string): string {
+    const esc = String.fromCharCode(27);
+    // Pi's normal chat renderer can emit terminal integration escape sequences
+    // (notably OSC 133 prompt zones). Those are correct in the main transcript,
+    // but inside an overlay preview they can confuse the terminal/TUI diff and
+    // leave stale borders/content behind. Keep normal SGR color sequences, strip
+    // only OSC/APC-style control payloads.
+    return line
+      .replace(new RegExp(`${esc}\\][^\\u0007]*(?:\\u0007|${esc}\\\\)`, "g"), "")
+      .replace(new RegExp(`${esc}_.*?(?:\\u0007|${esc}\\\\)`, "g"), "");
   }
 
   private topBorder(width: number, title: string): string {

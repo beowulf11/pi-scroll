@@ -1,9 +1,20 @@
 {
-  "name": "scroll",
+  "name": "pi-scroll",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "Pi package that adds a /scroll session history search command",
   "keywords": [
-    "pi-package"
+    "pi",
+    "pi-extension",
+    "pi-package",
+    "scroll",
+    "session-search"
+  ],
+  "files": [
+    "README.md",
+    "extensions",
+    "src",
+    "assets"
   ],
   "type": "module",
   "scripts": {
@@ -25,6 +36,7 @@
   "pi": {
     "extensions": [
       "./extensions"
-    ]
+    ],
+    "image": "https://unpkg.com/pi-scroll@0.1.0/assets/screenshot.png"
   }
 }

@@ -6,6 +6,11 @@ export type ScrollInputAction =
   | { type: "scope" }
   | { type: "preview" }
   | { type: "filter" }
+  | { type: "searchMode" }
+  | { type: "help" }
+  | { type: "focusPreview" }
+  | { type: "previewHalfPage"; delta: number }
+  | { type: "ctrlU" }
   | { type: "move"; delta: number }
   | { type: "cursor"; delta: number; word?: boolean }
   | { type: "cursorStart" }
@@ -21,9 +26,17 @@ export type ScrollInputAction =
 
 export function interpretScrollInput(data: string): ScrollInputAction {
   if (matchesKey(data, Key.escape) || matchesKey(data, Key.ctrl("c"))) return { type: "cancel" };
+  if (matchesKey(data, Key.ctrl("h"))) return { type: "help" };
+  if (data === "\t") return { type: "focusPreview" };
+  if (matchesKey(data, Key.ctrl("d"))) return { type: "previewHalfPage", delta: 1 };
+  if (matchesKey(data, Key.ctrl("u"))) return { type: "ctrlU" };
   if (matchesKey(data, Key.ctrl("g"))) return { type: "scope" };
   if (matchesKey(data, Key.ctrl("o"))) return { type: "preview" };
   if (matchesKey(data, Key.ctrl("t"))) return { type: "filter" };
+  if (matchesKey(data, Key.ctrl("e"))) return { type: "cursorEnd" };
+  if (matchesKey(data, Key.ctrl("s")) || matchesKey(data, Key.ctrl("r"))) {
+    return { type: "searchMode" };
+  }
   if (matchesKey(data, Key.enter)) return { type: "select" };
 
   if (matchesKey(data, Key.down) || matchesKey(data, Key.ctrl("n"))) {
@@ -35,7 +48,6 @@ export function interpretScrollInput(data: string): ScrollInputAction {
   }
 
   if (matchesKey(data, Key.ctrl("a"))) return { type: "cursorStart" };
-  if (matchesKey(data, Key.ctrl("e"))) return { type: "cursorEnd" };
   if (matchesKey(data, Key.left) || matchesKey(data, Key.ctrl("b")))
     return { type: "cursor", delta: -1 };
   if (matchesKey(data, Key.right) || matchesKey(data, Key.ctrl("f")))
@@ -47,9 +59,10 @@ export function interpretScrollInput(data: string): ScrollInputAction {
     return { type: "cursor", delta: 1, word: true };
   }
 
-  if (matchesKey(data, Key.ctrl("u"))) return { type: "deleteToStart" };
   if (matchesKey(data, Key.ctrl("k"))) return { type: "deleteToEnd" };
-  if (matchesKey(data, Key.ctrl("w"))) return { type: "deleteWordBackward" };
+  if (matchesKey(data, Key.ctrl("v")) || matchesKey(data, Key.ctrl("w"))) {
+    return { type: "deleteWordBackward" };
+  }
   if (matchesKey(data, Key.alt("d"))) return { type: "deleteWordForward" };
   if (matchesKey(data, Key.backspace)) return { type: "backspace" };
   if (matchesKey(data, Key.delete)) return { type: "delete" };

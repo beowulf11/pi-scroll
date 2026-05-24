@@ -18,6 +18,7 @@ export default function scrollExtension(pi: ExtensionAPI) {
             theme,
             done,
             requestRender: () => tui.requestRender(),
+            tui,
             sessionsDir,
             currentSessionFile,
             cwd: ctx.cwd,

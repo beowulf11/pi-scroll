@@ -20,7 +20,7 @@ describe("scroll chrome", () => {
     });
 
     const border = ui.render(80)[0]!;
-    const title = " Results: CWD / chat ";
+    const title = " Results: CWD / chat / fixed ";
     const titleStart = border.indexOf(title);
     const left = titleStart - 1;
     const right = border.length - titleStart - title.length - 1;
@@ -38,12 +38,28 @@ describe("scroll chrome", () => {
     });
     ui.query = "private";
     ui.results = [
-      { file: "1", line: 1, firstInput: "one", matchText: "private" },
-      { file: "2", line: 1, firstInput: "two", matchText: "private" },
+      {
+        file: "1",
+        line: 1,
+        firstInput: "one",
+        matchText: "private",
+        matchedTerms: ["private"],
+        score: 90,
+        snippetSource: "semantic",
+      },
+      {
+        file: "2",
+        line: 1,
+        firstInput: "two",
+        matchText: "private",
+        matchedTerms: ["private"],
+        score: 90,
+        snippetSource: "semantic",
+      },
     ];
 
     const lines = ui.render(100);
-    expect(lines[0]).toContain(" Results: CWD / chat (1/2) ");
+    expect(lines[0]).toContain(" Results: CWD / chat / fixed (1/2) ");
     expect(lines.at(-2)).not.toContain("1/2");
   });
 });

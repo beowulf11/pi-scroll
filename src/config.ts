@@ -3,6 +3,7 @@ import { join } from "node:path";
 
 export type ScrollScopeMode = "cwd" | "global";
 export type ScrollFilterMode = "chat" | "all";
+export type ScrollSearchMode = "fixed" | "regex";
 
 export type ScrollConfig = {
   preview: boolean;
@@ -13,9 +14,11 @@ export type ScrollConfig = {
   maxPreviewCharsPerMessage: number;
   defaultScope: ScrollScopeMode;
   defaultFilterMode: ScrollFilterMode;
+  defaultSearchMode: ScrollSearchMode;
   minQueryLength: number;
   maxResults: number;
   maxResultTextLength: number;
+  ripgrepMaxCount: number;
   navigationWrapQuietMs: number;
 };
 
@@ -28,17 +31,19 @@ export const defaultConfig: ScrollConfig = {
   maxPreviewCharsPerMessage: 260,
   defaultScope: "cwd",
   defaultFilterMode: "chat",
+  defaultSearchMode: "fixed",
   minQueryLength: 2,
   maxResults: 50,
   maxResultTextLength: 500,
+  ripgrepMaxCount: 10,
   navigationWrapQuietMs: 180,
 };
 
 export function loadScrollConfig(agentDir: string, cwd: string): ScrollConfig {
   return {
     ...defaultConfig,
-    ...readConfigFile(join(agentDir, "scroll.json")),
-    ...readConfigFile(join(cwd, ".pi", "scroll.json")),
+    ...readConfigFile(join(agentDir, "pi-scroll.json")),
+    ...readConfigFile(join(cwd, ".pi", "pi-scroll.json")),
   };
 }
 

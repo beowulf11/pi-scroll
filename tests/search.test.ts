@@ -2,6 +2,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
+  buildRipgrepArgs,
   clearMetaCache,
   parseMatchedJsonlLine,
   searchSessions,
@@ -114,6 +115,25 @@ describe("search parsing", () => {
     expect(parseMatchedJsonlLine(file, 2, raw, 120, ["needle"], "all")?.matchText).toContain(
       "needle",
     );
+  });
+
+  it("builds ripgrep args for fixed and regex modes with max-count", () => {
+    expect(
+      buildRipgrepArgs({
+        query: "a.b",
+        searchRoot: "/sessions",
+        searchMode: "fixed",
+        maxCount: 10,
+      }),
+    ).toContain("--fixed-strings");
+    const regexArgs = buildRipgrepArgs({
+      query: "a.*b",
+      searchRoot: "/sessions",
+      searchMode: "regex",
+      maxCount: 10,
+    });
+    expect(regexArgs).not.toContain("--fixed-strings");
+    expect(regexArgs).toEqual(expect.arrayContaining(["--max-count", "10"]));
   });
 
   it("maps cwd to Pi's session directory naming scheme", () => {

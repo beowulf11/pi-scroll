@@ -1,3 +1,40 @@
+export type Component = {
+  render(width: number): string[];
+  invalidate(): void;
+};
+
+export class Container implements Component {
+  private children: Component[] = [];
+
+  addChild(child: Component) {
+    this.children.push(child);
+  }
+
+  clear() {
+    this.children = [];
+  }
+
+  render(width: number): string[] {
+    return this.children.flatMap((child) => child.render(width));
+  }
+
+  invalidate() {}
+}
+
+export class Text implements Component {
+  constructor(
+    private text: string,
+    private _paddingX = 0,
+    private _paddingY = 0,
+  ) {}
+
+  render(width: number): string[] {
+    return wrapTextWithAnsi(this.text, width);
+  }
+
+  invalidate() {}
+}
+
 export const Key = {
   escape: "escape",
   enter: "enter",
@@ -18,18 +55,24 @@ export function matchesKey(data: string, key: string): boolean {
     "\n": "enter",
     "\x7f": "backspace",
     "\x07": "ctrl+g",
+    "\x08": "ctrl+h",
     "\x0e": "ctrl+n",
     "\x0f": "ctrl+o",
     "\x10": "ctrl+p",
     "\x14": "ctrl+t",
+    "\x13": "ctrl+s",
+    "\x12": "ctrl+r",
     "\x05": "ctrl+e",
     "\x03": "ctrl+c",
+    "\x04": "ctrl+d",
     "\x01": "ctrl+a",
     "\x02": "ctrl+b",
     "\x06": "ctrl+f",
     "\x0b": "ctrl+k",
     "\x15": "ctrl+u",
+    "\x16": "ctrl+v",
     "\x17": "ctrl+w",
+    "\t": "tab",
     "\x1bd": "alt+d",
     "\x1bb": "alt+b",
     "\x1bf": "alt+f",
