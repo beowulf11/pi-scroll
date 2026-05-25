@@ -20,7 +20,7 @@ describe("scroll chrome", () => {
     });
 
     const border = ui.render(80)[0]!;
-    const title = " Results: CWD / chat / fixed ";
+    const title = " History: CWD / chat / fixed ";
     const titleStart = border.indexOf(title);
     const left = titleStart - 1;
     const right = border.length - titleStart - title.length - 1;

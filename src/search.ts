@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { type ScrollFilterMode, type ScrollSearchMode } from "./config.ts";
 import {
@@ -203,6 +204,64 @@ export function searchRootForScope(
   return join(sessionsDir, sessionDirNameForCwd(scope.cwd));
 }
 
+export type ListSessionsOptions = {
+  sessionsDir: string;
+  currentSessionFile?: string;
+  maxResults?: number;
+  maxTextLength?: number;
+  scope?: SearchScope;
+};
+
+export async function listRecentSessions(options: ListSessionsOptions): Promise<SearchResult[]> {
+  const searchRoot = searchRootForScope(options.sessionsDir, options.scope);
+  if (!existsSync(searchRoot)) return [];
+
+  const maxResults = options.maxResults ?? 50;
+  const maxTextLength = options.maxTextLength ?? 500;
+  const files = await collectSessionFiles(searchRoot);
+  const results: SearchResult[] = [];
+
+  for (const file of files) {
+    if (options.currentSessionFile && file === options.currentSessionFile) continue;
+
+    let modifiedMs = 0;
+    try {
+      modifiedMs = (await stat(file)).mtimeMs;
+    } catch {
+      continue;
+    }
+
+    const meta = readSessionMeta(file);
+    results.push({
+      file,
+      line: 1,
+      timestamp: modifiedMs > 0 ? new Date(modifiedMs).toISOString() : undefined,
+      cwd: meta.cwd ? truncatePlain(meta.cwd, maxTextLength) : undefined,
+      firstInput: truncatePlain(meta.firstInput, maxTextLength),
+      matchText: meta.cwd ? `cwd: ${truncatePlain(meta.cwd, maxTextLength)}` : meta.firstInput,
+      matchedTerms: [],
+      role: "session",
+      score: modifiedMs,
+      snippetSource: "semantic",
+    });
+  }
+
+  return results
+    .sort((a, b) => b.score - a.score || a.file.localeCompare(b.file))
+    .slice(0, maxResults);
+}
+
+async function collectSessionFiles(root: string): Promise<string[]> {
+  const out: string[] = [];
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const path = join(root, entry.name);
+    if (entry.isDirectory()) out.push(...(await collectSessionFiles(path)));
+    else if (entry.isFile() && entry.name.endsWith(".jsonl")) out.push(path);
+  }
+  return out;
+}
+
 export function buildRipgrepArgs(options: {
   query: string;
   searchRoot: string;
@@ -225,6 +284,15 @@ export function buildRipgrepArgs(options: {
 
 export function searchSessions(options: SearchOptions): Promise<SearchResponse> {
   const query = options.query.trim();
+  if (query.length === 0) {
+    return listRecentSessions(options)
+      .then((results) => ({ ok: true as const, results }))
+      .catch((error: unknown) => ({
+        ok: false as const,
+        error: error instanceof Error ? error.message : String(error),
+        results: [],
+      }));
+  }
   if (query.length < (options.minQueryLength ?? 2))
     return Promise.resolve({ ok: true, results: [] });
   const searchRoot = searchRootForScope(options.sessionsDir, options.scope);

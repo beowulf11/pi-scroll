@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildRipgrepArgs,
   clearMetaCache,
+  listRecentSessions,
   parseMatchedJsonlLine,
   searchSessions,
   snippetAroundTerms,
@@ -143,6 +144,30 @@ describe("search parsing", () => {
     expect(searchRootForScope("/sessions", { type: "cwd", cwd: "/tmp/project" })).toBe(
       "/sessions/--tmp-project--",
     );
+  });
+
+  it("lists recent sessions for empty-query history browsing", async () => {
+    clearMetaCache();
+    const dir = join(process.cwd(), ".tmp-test-scroll-list");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "one.jsonl");
+    writeFileSync(
+      file,
+      [
+        JSON.stringify({ type: "session", cwd: "/work" }),
+        JSON.stringify({ type: "message", message: { role: "user", content: "first input" } }),
+      ].join("\n"),
+    );
+
+    const results = await listRecentSessions({ sessionsDir: dir });
+
+    expect(results[0]).toMatchObject({
+      file,
+      line: 1,
+      cwd: "/work",
+      firstInput: "first input",
+      role: "session",
+    });
   });
 });
 

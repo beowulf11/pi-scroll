@@ -64,6 +64,7 @@ export class ScrollSearchComponent {
     this.filterMode = options.config.defaultFilterMode;
     this.searchMode = options.config.defaultSearchMode;
     this.previewOpen = options.config.preview;
+    this.scheduleSearch();
   }
 
   invalidate(): void {
@@ -269,16 +270,10 @@ export class ScrollSearchComponent {
     );
     const shown = this.results.slice(start, start + visibleResults);
 
-    if (!this.query.trim()) {
-      body.push(
-        this.theme.fg(
-          "muted",
-          `Search scope: ${this.scopeLabel()} • filter: ${this.filterMode} • search: ${this.searchMode}`,
-        ),
-      );
-      body.push(
-        this.theme.fg("muted", `Search runs live over ${this.options.sessionsDir} with ripgrep.`),
-      );
+    if (!this.query.trim() && this.loading && this.results.length === 0) {
+      body.push(this.theme.fg("warning", "loading recent sessions…"));
+    } else if (!this.query.trim() && !this.loading && this.results.length === 0) {
+      body.push(this.theme.fg("muted", "No recent sessions found."));
       body.push(
         this.theme.fg(
           "dim",
@@ -337,7 +332,9 @@ export class ScrollSearchComponent {
   }
 
   private resultsTitle(): string {
-    const title = `Results: ${this.scopeMode === "global" ? "Global" : "CWD"} / ${this.filterMode} / ${this.searchMode}`;
+    const mode = this.query.trim() ? "Results" : "History";
+    const scope = this.scopeMode === "global" ? "Global" : "CWD";
+    const title = `${mode}: ${scope} / ${this.filterMode} / ${this.searchMode}`;
     if (this.results.length === 0) return title;
     return `${title} (${this.selected + 1}/${this.results.length})`;
   }
@@ -482,12 +479,12 @@ export class ScrollSearchComponent {
       ? this.results[this.selected]
       : undefined;
     const queryLength = this.query.trim().length;
-    this.loading = queryLength >= this.options.config.minQueryLength;
+    this.loading = queryLength === 0 || queryLength >= this.options.config.minQueryLength;
     this.error = undefined;
     if (!options.preserveSelection) this.selected = 0;
     this.edgeLatch = undefined;
     this.lastNavigation = undefined;
-    if (queryLength < this.options.config.minQueryLength) {
+    if (queryLength > 0 && queryLength < this.options.config.minQueryLength) {
       this.results = [];
       this.searchGeneration++;
       this.schedulePreview();

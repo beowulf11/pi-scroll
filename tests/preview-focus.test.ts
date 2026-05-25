@@ -38,6 +38,10 @@ describe("preview focus", () => {
     ui.previewComponent = {
       render: () => Array.from({ length: 80 }, (_, i) => `line ${i + 1}`),
       invalidate: () => {},
+      loadMore: async () => {},
+      hasMore: false,
+      loadingMore: false,
+      loadedEntries: 80,
     };
 
     ui.render(120);

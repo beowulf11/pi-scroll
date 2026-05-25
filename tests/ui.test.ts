@@ -36,8 +36,24 @@ describe("scroll ui", () => {
     vi.setSystemTime(0);
     const ui = component();
     ui.results = [
-      { file: "1", line: 1, firstInput: "one", matchText: "one" },
-      { file: "2", line: 1, firstInput: "two", matchText: "two" },
+      {
+        file: "1",
+        line: 1,
+        firstInput: "one",
+        matchText: "one",
+        matchedTerms: [],
+        score: 90,
+        snippetSource: "semantic",
+      },
+      {
+        file: "2",
+        line: 1,
+        firstInput: "two",
+        matchText: "two",
+        matchedTerms: [],
+        score: 90,
+        snippetSource: "semantic",
+      },
     ];
 
     ui.handleInput("\x0e");
@@ -57,8 +73,24 @@ describe("scroll ui", () => {
     vi.setSystemTime(0);
     const ui = component();
     ui.results = [
-      { file: "1", line: 1, firstInput: "one", matchText: "one" },
-      { file: "2", line: 1, firstInput: "two", matchText: "two" },
+      {
+        file: "1",
+        line: 1,
+        firstInput: "one",
+        matchText: "one",
+        matchedTerms: [],
+        score: 90,
+        snippetSource: "semantic",
+      },
+      {
+        file: "2",
+        line: 1,
+        firstInput: "two",
+        matchText: "two",
+        matchedTerms: [],
+        score: 90,
+        snippetSource: "semantic",
+      },
     ];
 
     ui.handleInput("\x10");

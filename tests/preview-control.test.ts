@@ -22,6 +22,10 @@ describe("preview control sequences", () => {
     ui.previewComponent = {
       render: () => ["\x1b]133;A\x07user text\x1b]133;B\x07"],
       invalidate: () => {},
+      loadMore: async () => {},
+      hasMore: false,
+      loadingMore: false,
+      loadedEntries: 1,
     };
 
     const rendered = ui.render(120).join("\n");
