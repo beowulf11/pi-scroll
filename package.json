@@ -1,6 +1,6 @@
 {
   "name": "pi-scroll",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "description": "Fast keyboard-driven Pi session history search with rich previews.",
   "keywords": [
@@ -52,6 +52,6 @@
     "extensions": [
       "./extensions"
     ],
-    "image": "https://unpkg.com/pi-scroll@0.1.0/assets/screenshot.png"
+    "image": "https://unpkg.com/pi-scroll@0.1.1/assets/screenshot.png"
   }
 }
