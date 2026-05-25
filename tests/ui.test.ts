@@ -78,4 +78,18 @@ describe("scroll ui", () => {
     ui.handleInput("\x0f");
     expect(ui.render(140).join("\n")).not.toContain("Preview");
   });
+
+  it("normalizes tabs from preview content before rendering boxed lines", () => {
+    const ui = component();
+    ui.previewComponent = {
+      render: () => ["\t\tconst should: QueryDslQueryContainer[] = []"],
+      invalidate: () => {},
+      loadMore: async () => {},
+      hasMore: false,
+      loadingMore: false,
+      loadedEntries: 1,
+    };
+
+    expect(ui.render(100).join("\n")).not.toContain("\t");
+  });
 });

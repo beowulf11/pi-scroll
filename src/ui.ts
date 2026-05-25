@@ -689,9 +689,18 @@ export class ScrollSearchComponent {
     // but inside an overlay preview they can confuse the terminal/TUI diff and
     // leave stale borders/content behind. Keep normal SGR color sequences, strip
     // only OSC/APC-style control payloads.
-    return line
-      .replace(new RegExp(`${esc}\\][^\\u0007]*(?:\\u0007|${esc}\\\\)`, "g"), "")
-      .replace(new RegExp(`${esc}_.*?(?:\\u0007|${esc}\\\\)`, "g"), "");
+    return this.normalizeRenderableText(
+      line
+        .replace(new RegExp(`${esc}\\][^\\u0007]*(?:\\u0007|${esc}\\\\)`, "g"), "")
+        .replace(new RegExp(`${esc}_.*?(?:\\u0007|${esc}\\\\)`, "g"), ""),
+    );
+  }
+
+  private normalizeRenderableText(text: string): string {
+    // Raw tabs expand to terminal tab stops after pi-tui has measured/truncated
+    // the line, which can make a rendered row wider than the component width.
+    // Replace them before any final box padding/truncation.
+    return text.replace(/\t/g, "  ");
   }
 
   private topBorder(width: number, title: string): string {
@@ -709,7 +718,8 @@ export class ScrollSearchComponent {
 
   private boxLine(content: string, width: number): string {
     const innerWidth = Math.max(0, width - 4);
-    const truncated = truncateToWidth(content, innerWidth);
+    const normalized = this.normalizeRenderableText(content);
+    const truncated = truncateToWidth(normalized, innerWidth);
     const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(truncated)));
     return `${this.theme.fg("border", "│ ")}${truncated}${padding}${this.theme.fg("border", " │")}`;
   }
